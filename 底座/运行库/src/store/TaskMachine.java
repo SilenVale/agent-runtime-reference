@@ -24,6 +24,21 @@ public final class TaskMachine {
     }
 
     public void submit(Transaction tx, String taskId, int epoch, String owner, TaskState target) {
+        TaskRow task = requireRight(tx, taskId, epoch, owner);
+        tx.saveTask(task.toBuilder().state(target).build());
+    }
+
+    public TaskRow renew(Transaction tx, String taskId, int epoch, String owner, long leaseUntil) {
+        TaskRow task = requireRight(tx, taskId, epoch, owner);
+        if (leaseUntil <= tx.now()) {
+            throw new Rejected("租约已失效");
+        }
+        TaskRow renewed = task.toBuilder().leaseExpiresAt(leaseUntil).build();
+        tx.saveTask(renewed);
+        return renewed;
+    }
+
+    public TaskRow requireRight(Transaction tx, String taskId, int epoch, String owner) {
         TaskRow task = tx.requireTask(taskId);
         if (task.state().terminal()) {
             throw new Rejected("终态拒绝回写");
@@ -31,7 +46,10 @@ public final class TaskMachine {
         if (task.epoch() != epoch || task.owner() == null || !task.owner().equals(owner)) {
             throw new Rejected("旧代次不能回写");
         }
-        tx.saveTask(task.toBuilder().state(target).build());
+        if (task.leaseExpiresAt() == null || task.leaseExpiresAt() <= tx.now()) {
+            throw new Rejected("租约已失效");
+        }
+        return task;
     }
 
     public void markWaiting(Transaction tx, String taskId, long deadline) {

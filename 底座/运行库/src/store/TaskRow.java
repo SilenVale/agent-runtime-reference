@@ -6,7 +6,11 @@ package store;
 public final class TaskRow {
     private final String taskId;
     private final String tenant;
+    private final String actor;
     private final String conversationId;
+    private final String idempotencyKey;
+    private final String paramDigest;
+    private final String runVersion;
     private final TaskState state;
     private final int epoch;
     private final String owner;
@@ -19,7 +23,11 @@ public final class TaskRow {
     private TaskRow(Builder builder) {
         this.taskId = builder.taskId;
         this.tenant = builder.tenant;
+        this.actor = builder.actor;
         this.conversationId = builder.conversationId;
+        this.idempotencyKey = builder.idempotencyKey;
+        this.paramDigest = builder.paramDigest;
+        this.runVersion = builder.runVersion;
         this.state = builder.state;
         this.epoch = builder.epoch;
         this.owner = builder.owner;
@@ -36,7 +44,11 @@ public final class TaskRow {
 
     public Builder toBuilder() {
         return new Builder(taskId, tenant)
+                .actor(actor)
                 .conversationId(conversationId)
+                .idempotencyKey(idempotencyKey)
+                .paramDigest(paramDigest)
+                .runVersion(runVersion)
                 .state(state)
                 .epoch(epoch)
                 .owner(owner)
@@ -45,6 +57,22 @@ public final class TaskRow {
                 .spent(spent)
                 .reserved(reserved)
                 .recoveryRef(recoveryRef);
+    }
+
+    public String actor() {
+        return actor;
+    }
+
+    public String idempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public String paramDigest() {
+        return paramDigest;
+    }
+
+    public String runVersion() {
+        return runVersion;
     }
 
     public String taskId() {
@@ -98,7 +126,11 @@ public final class TaskRow {
     public static final class Builder {
         private final String taskId;
         private final String tenant;
+        private String actor;
         private String conversationId;
+        private String idempotencyKey;
+        private String paramDigest;
+        private String runVersion = "v1";
         private TaskState state = TaskState.ACCEPTED;
         private int epoch;
         private String owner;
@@ -113,8 +145,28 @@ public final class TaskRow {
             this.tenant = tenant;
         }
 
+        public Builder actor(String value) {
+            this.actor = value;
+            return this;
+        }
+
         public Builder conversationId(String value) {
             this.conversationId = value;
+            return this;
+        }
+
+        public Builder idempotencyKey(String value) {
+            this.idempotencyKey = value;
+            return this;
+        }
+
+        public Builder paramDigest(String value) {
+            this.paramDigest = value;
+            return this;
+        }
+
+        public Builder runVersion(String value) {
+            this.runVersion = value;
             return this;
         }
 

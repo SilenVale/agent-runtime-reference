@@ -1,6 +1,7 @@
 package store;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -13,6 +14,12 @@ public final class Database {
     final Map<String, OperationRow> operations = new HashMap<>();
     final Map<String, CheckpointRow> checkpoints = new HashMap<>();
     final Map<String, ApprovalRow> approvals = new HashMap<>();
+    final Map<String, IdempotencyRow> idempotency = new HashMap<>();
+    final Map<String, EventRow> events = new HashMap<>();
+    final Map<String, OutboxRow> outbox = new HashMap<>();
+    final Map<String, InboxRow> inbox = new HashMap<>();
+    final Map<String, QuotaRow> quotas = new HashMap<>();
+    final Map<String, BudgetCall> budgetCalls = new HashMap<>();
     final List<SessionNote> sessions = new ArrayList<>();
     private long now;
 
@@ -32,6 +39,10 @@ public final class Database {
         return tasks.get(taskId);
     }
 
+    public Collection<TaskRow> tasks() {
+        return List.copyOf(tasks.values());
+    }
+
     public OperationRow operation(String operationId) {
         return operations.get(operationId);
     }
@@ -46,5 +57,36 @@ public final class Database {
 
     public List<SessionNote> sessions() {
         return List.copyOf(sessions);
+    }
+
+    public Collection<EventRow> events() {
+        return List.copyOf(events.values());
+    }
+
+    public Collection<OutboxRow> outbox() {
+        return List.copyOf(outbox.values());
+    }
+
+    public Collection<InboxRow> inbox() {
+        return List.copyOf(inbox.values());
+    }
+
+    public BudgetCall budgetCall(String callId) {
+        return budgetCalls.get(callId);
+    }
+
+    public Collection<IdempotencyRow> idempotency() {
+        return List.copyOf(idempotency.values());
+    }
+
+    public List<OutboxRow> pendingOutbox() {
+        List<OutboxRow> pending = new ArrayList<>();
+        for (OutboxRow row : outbox.values()) {
+            if ("PENDING".equals(row.status())) {
+                pending.add(row);
+            }
+        }
+        pending.sort((left, right) -> Integer.compare(left.dispatchSeq(), right.dispatchSeq()));
+        return pending;
     }
 }

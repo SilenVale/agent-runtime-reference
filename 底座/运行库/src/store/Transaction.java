@@ -11,6 +11,12 @@ public final class Transaction implements AutoCloseable {
     private final Map<String, OperationRow> operations;
     private final Map<String, CheckpointRow> checkpoints;
     private final Map<String, ApprovalRow> approvals;
+    private final Map<String, IdempotencyRow> idempotency;
+    private final Map<String, EventRow> events;
+    private final Map<String, OutboxRow> outbox;
+    private final Map<String, InboxRow> inbox;
+    private final Map<String, QuotaRow> quotas;
+    private final Map<String, BudgetCall> budgetCalls;
     private final List<SessionNote> sessions;
     private boolean finished;
 
@@ -20,6 +26,12 @@ public final class Transaction implements AutoCloseable {
         this.operations = new HashMap<>(database.operations);
         this.checkpoints = new HashMap<>(database.checkpoints);
         this.approvals = new HashMap<>(database.approvals);
+        this.idempotency = new HashMap<>(database.idempotency);
+        this.events = new HashMap<>(database.events);
+        this.outbox = new HashMap<>(database.outbox);
+        this.inbox = new HashMap<>(database.inbox);
+        this.quotas = new HashMap<>(database.quotas);
+        this.budgetCalls = new HashMap<>(database.budgetCalls);
         this.sessions = new ArrayList<>(database.sessions);
     }
 
@@ -76,16 +88,106 @@ public final class Transaction implements AutoCloseable {
         sessions.add(note);
     }
 
+    public IdempotencyRow idempotency(String tenant, String actor, String key) {
+        return idempotency.get(tenant + "|" + actor + "|" + key);
+    }
+
+    public void saveIdempotency(IdempotencyRow row) {
+        ensureOpen();
+        idempotency.put(row.id(), row);
+    }
+
+    public void saveEvent(EventRow event) {
+        ensureOpen();
+        events.put(event.id(), event);
+    }
+
+    public int nextEventSeq(String taskId) {
+        int max = 0;
+        for (EventRow event : events.values()) {
+            if (event.taskId().equals(taskId) && event.eventSeq() > max) {
+                max = event.eventSeq();
+            }
+        }
+        return max + 1;
+    }
+
+    public void saveOutbox(OutboxRow row) {
+        ensureOpen();
+        outbox.put(row.messageId(), row);
+    }
+
+    public OutboxRow outbox(String messageId) {
+        return outbox.get(messageId);
+    }
+
+    public boolean hasPendingOutbox(String taskId) {
+        for (OutboxRow row : outbox.values()) {
+            if (row.taskId().equals(taskId) && "PENDING".equals(row.status())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public int maxDispatchSeq(String taskId) {
+        int max = 0;
+        for (OutboxRow row : outbox.values()) {
+            if (row.taskId().equals(taskId) && row.dispatchSeq() > max) {
+                max = row.dispatchSeq();
+            }
+        }
+        return max;
+    }
+
+    public void saveInbox(InboxRow row) {
+        ensureOpen();
+        inbox.put(row.id(), row);
+    }
+
+    public InboxRow inbox(String consumer, String messageId) {
+        return inbox.get(consumer + "|" + messageId);
+    }
+
+    public void saveQuota(QuotaRow quota) {
+        ensureOpen();
+        quotas.put(quota.tenant(), quota);
+    }
+
+    public QuotaRow quota(String tenant) {
+        return quotas.get(tenant);
+    }
+
+    public void saveBudgetCall(BudgetCall call) {
+        ensureOpen();
+        budgetCalls.put(call.callId(), call);
+    }
+
+    public BudgetCall budgetCall(String callId) {
+        return budgetCalls.get(callId);
+    }
+
+    public OperationRow operationForNode(String taskId, String nodeKey) {
+        for (OperationRow row : operations.values()) {
+            if (row.taskId().equals(taskId) && nodeKey != null && nodeKey.equals(row.nodeKey())) {
+                return row;
+            }
+        }
+        return null;
+    }
+
     public void commit() {
         ensureOpen();
-        database.tasks.clear();
-        database.tasks.putAll(tasks);
-        database.operations.clear();
-        database.operations.putAll(operations);
-        database.checkpoints.clear();
-        database.checkpoints.putAll(checkpoints);
-        database.approvals.clear();
-        database.approvals.putAll(approvals);
+        replace(database.tasks, tasks);
+        replace(database.operations, operations);
+        replace(database.checkpoints, checkpoints);
+        replace(database.approvals, approvals);
+        replace(database.idempotency, idempotency);
+        replace(database.events, events);
+        replace(database.outbox, outbox);
+        replace(database.inbox, inbox);
+        replace(database.quotas, quotas);
+        replace(database.budgetCalls, budgetCalls);
         database.sessions.clear();
         database.sessions.addAll(sessions);
         finished = true;
@@ -106,5 +208,10 @@ public final class Transaction implements AutoCloseable {
         if (finished) {
             throw new Rejected("事务已结束");
         }
+    }
+
+    private static <K, V> void replace(Map<K, V> target, Map<K, V> source) {
+        target.clear();
+        target.putAll(source);
     }
 }

@@ -29,13 +29,13 @@
 
 ## 演示
 
-一条命令拉起本机 PostgreSQL 和 Kafka，再启动接入层、消息投递、Runtime 三个 Java 进程，跑完三段事故。终端里能看见受理、投递、接管、代次拒绝、按原编号查询。
+一台只要有 Docker 和 JDK 21，就能跑。`scripts/demo.sh` 用 Docker Compose 拉起 PostgreSQL 和 Kafka，再启动接入层、消息投递、Runtime 三个 Java 进程，跑完三段事故。杀掉第一个 Worker 之后，只等租约自己到期，不改库里的租约字段。
 
 ```bash
 scripts/demo.sh
 ```
 
-输出写在 `docs/demo/三段演示.txt`，连上的服务写在 `docs/demo/环境.txt`。各章规则测试仍可用进程内模型；演示不改回进程内模型。若要录屏，画面停留在这三段输出上即可。任意一段都是「事故被接住」：同一个幂等键没有第二条任务，退出的 Worker 之后另一个 Worker 把代次往下接，同一个 `operation_id` 没有让假写写第二次。
+输出写在 `docs/demo/三段演示.txt`，连上的服务写在 `docs/demo/环境.txt`。各章规则测试仍可用进程内模型；演示不改回进程内模型。任意一段都是「事故被接住」：同一个幂等键没有第二条任务，退出的 Worker 之后另一个 Worker 把代次往下接，同一个 `operation_id` 没有让假写写第二次。
 
 ## 架构图
 

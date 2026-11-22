@@ -4,7 +4,9 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
 runtime_dir="$root/.runtime"
-mkdir -p "$runtime_dir" "$runtime_dir/lib" "$root/docs/demo" "$root/out"
+compose_file="$root/deploy/demo/docker-compose.yml"
+mkdir -p "$runtime_dir/lib" "$runtime_dir/pids" "$root/docs/demo" "$root/out"
+
 export PGHOST="${PGHOST:-127.0.0.1}"
 export PGPORT="${PGPORT:-5432}"
 export PGUSER="${PGUSER:-runtime}"
@@ -15,85 +17,86 @@ export KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-127.0.0.1:9092}"
 export KAFKA_TOPIC="${KAFKA_TOPIC:-runtime.schedule}"
 export KAFKA_GROUP="runtime-workers-demo-$$"
 export ACCESS_PORT="${ACCESS_PORT:-8080}"
-export LEASE_MS="${LEASE_MS:-5000}"
-export KAFKA_HOME="${KAFKA_HOME:-/tmp/kafka-dl/kafka_2.13-3.9.0}"
+# 租约短一点，方便演示里等它自己到期。禁止脚本改 lease_expires_at。
+# 只用 DEMO_LEASE_MS，避免外壳里残留的 LEASE_MS 把等待拉长。
+export LEASE_MS="${DEMO_LEASE_MS:-5000}"
 
 fail() {
   echo "演示未通过：$1" >&2
   exit 1
 }
 
-ensure_postgres() {
-  if ! command -v psql >/dev/null 2>&1; then
-    fail "本机没有 psql。PostgreSQL 未安装，不能用进程内模型代替演示。"
+docker_bin() {
+  if docker info >/dev/null 2>&1; then
+    echo docker
+  elif sudo docker info >/dev/null 2>&1; then
+    echo "sudo docker"
+  else
+    fail "本机没有可用的 Docker。演示只靠 Docker 拉起 PostgreSQL 和 Kafka，不能改用本机安装或进程内模型。"
   fi
-  if ! PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -c 'SELECT 1' >/dev/null 2>&1; then
-    if command -v pg_ctlcluster >/dev/null 2>&1; then
-      sudo pg_ctlcluster 16 main start >/dev/null 2>&1 || true
-    fi
-  fi
-  if ! PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -c 'SELECT 1' >/dev/null 2>&1; then
-    fail "连不上 PostgreSQL（$PGHOST:$PGPORT）。不要改用内存 Database。"
-  fi
-  PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='$PGDATABASE'" | grep -q 1 \
-    || sudo -u postgres psql -c "CREATE DATABASE $PGDATABASE OWNER $PGUSER" >/dev/null
-  PGPASSWORD="$PGPASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='$FAKE_DATABASE'" | grep -q 1 \
-    || sudo -u postgres psql -c "CREATE DATABASE $FAKE_DATABASE OWNER $PGUSER" >/dev/null
-  echo "PostgreSQL 已连接 $PGHOST:$PGPORT/$PGDATABASE"
 }
 
-ensure_kafka() {
-  if [[ ! -x "$KAFKA_HOME/bin/kafka-topics.sh" ]]; then
-    fail "找不到 Kafka 发行版：$KAFKA_HOME。请先解压 Kafka，或设置 KAFKA_HOME。不要改用内存 KafkaLog。"
-  fi
-  if ! "$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" --list >/dev/null 2>&1; then
-    mkdir -p "$runtime_dir/kafka-logs"
-    if [[ ! -f "$runtime_dir/kraft.properties" ]]; then
-      cp "$KAFKA_HOME/config/kraft/server.properties" "$runtime_dir/kraft.properties"
-      sed -i "s|^log.dirs=.*|log.dirs=$runtime_dir/kafka-logs|" "$runtime_dir/kraft.properties"
-      sed -i 's|^listeners=.*|listeners=PLAINTEXT://127.0.0.1:9092,CONTROLLER://127.0.0.1:9093|' "$runtime_dir/kraft.properties"
-      sed -i 's|^advertised.listeners=.*|advertised.listeners=PLAINTEXT://127.0.0.1:9092,CONTROLLER://127.0.0.1:9093|' "$runtime_dir/kraft.properties"
-      sed -i 's|^controller.quorum.voters=.*|controller.quorum.voters=1@127.0.0.1:9093|' "$runtime_dir/kraft.properties"
-      CLUSTER_ID="$("$KAFKA_HOME/bin/kafka-storage.sh" random-uuid)"
-      "$KAFKA_HOME/bin/kafka-storage.sh" format -t "$CLUSTER_ID" -c "$runtime_dir/kraft.properties" >/dev/null
+DOCKER=$(docker_bin)
+compose() {
+  $DOCKER compose -f "$compose_file" "$@"
+}
+
+psql_runtime() {
+  compose exec -T postgres \
+    env PGPASSWORD="$PGPASSWORD" \
+    psql -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 "$@"
+}
+
+ensure_docker_services() {
+  command -v java >/dev/null 2>&1 || fail "本机没有 java。三个进程要用本机 JDK 跑，服务才只用 Docker。"
+  command -v javac >/dev/null 2>&1 || fail "本机没有 javac。"
+  compose up -d
+  echo "等待 PostgreSQL 与 Kafka（Docker）就绪…"
+  ready_pg=0
+  ready_kafka=0
+  for _ in $(seq 1 60); do
+    if compose exec -T postgres pg_isready -U "$PGUSER" -d "$PGDATABASE" >/dev/null 2>&1; then
+      ready_pg=1
     fi
-    SESSION_NAME=kafka-broker
-    tmux -f /exec-daemon/tmux.portal.conf has-session -t "=$SESSION_NAME" 2>/dev/null \
-      || tmux -f /exec-daemon/tmux.portal.conf new-session -d -s "$SESSION_NAME" -c "$KAFKA_HOME" -- "${SHELL:-bash}" -l
-    tmux -f /exec-daemon/tmux.portal.conf send-keys -t "$SESSION_NAME:0.0" "bin/kafka-server-start.sh $runtime_dir/kraft.properties" C-m
-    ready=0
-    for _ in $(seq 1 30); do
-      if "$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" --list >/dev/null 2>&1; then
-        ready=1
-        break
-      fi
-      sleep 1
-    done
-    if [[ "$ready" -ne 1 ]]; then
-      fail "Kafka 未能在 $KAFKA_BOOTSTRAP 起来。不要改用内存 KafkaLog。"
+    if compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --list >/dev/null 2>&1; then
+      ready_kafka=1
     fi
-  fi
-  "$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" \
+    if [[ "$ready_pg" -eq 1 && "$ready_kafka" -eq 1 ]]; then
+      break
+    fi
+    sleep 1
+  done
+  [[ "$ready_pg" -eq 1 ]] || fail "Docker 里的 PostgreSQL 没起来。"
+  [[ "$ready_kafka" -eq 1 ]] || fail "Docker 里的 Kafka 没起来。"
+  compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 \
     --create --if-not-exists --topic "$KAFKA_TOPIC" --partitions 1 --replication-factor 1 >/dev/null
-  echo "Kafka 已连接 $KAFKA_BOOTSTRAP topic=$KAFKA_TOPIC"
+  # 确认 fake_write 库在（init 脚本只在空数据卷时跑）
+  compose exec -T postgres \
+    env PGPASSWORD="$PGPASSWORD" \
+    psql -U "$PGUSER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='$FAKE_DATABASE'" | grep -q 1 \
+    || compose exec -T postgres \
+      env PGPASSWORD="$PGPASSWORD" \
+      psql -U "$PGUSER" -d postgres -c "CREATE DATABASE $FAKE_DATABASE OWNER $PGUSER" >/dev/null
+  echo "PostgreSQL 已由 Docker 提供 $PGHOST:$PGPORT/$PGDATABASE"
+  echo "Kafka 已由 Docker 提供 $KAFKA_BOOTSTRAP topic=$KAFKA_TOPIC"
 }
 
 ensure_jars() {
-  if [[ ! -f "$runtime_dir/lib/postgresql-42.7.4.jar" ]]; then
-    curl -fsSL -o "$runtime_dir/lib/postgresql-42.7.4.jar" \
-      https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar \
-      || fail "下不了 PostgreSQL JDBC。演示不能改回内存模型。"
-  fi
-  if [[ ! -f "$runtime_dir/lib/kafka-clients-3.9.0.jar" ]]; then
-    if [[ -f "$KAFKA_HOME/libs/kafka-clients-3.9.0.jar" ]]; then
-      cp "$KAFKA_HOME/libs"/kafka-clients-*.jar "$KAFKA_HOME/libs"/slf4j-api-*.jar \
-        "$KAFKA_HOME/libs"/slf4j-reload4j-*.jar "$KAFKA_HOME/libs"/reload4j-*.jar \
-        "$KAFKA_HOME/libs"/lz4-java-*.jar "$KAFKA_HOME/libs"/snappy-java-*.jar \
-        "$KAFKA_HOME/libs"/zstd-jni-*.jar "$runtime_dir/lib/"
-    else
-      fail "缺少 kafka-clients jar。"
+  local base=https://repo1.maven.org/maven2
+  download() {
+    local url="$1" dest="$2"
+    if [[ ! -f "$dest" ]]; then
+      curl -fsSL -o "$dest" "$url" || fail "下不了 $dest"
     fi
-  fi
+  }
+  download "$base/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar" "$runtime_dir/lib/postgresql-42.7.4.jar"
+  download "$base/org/apache/kafka/kafka-clients/3.9.0/kafka-clients-3.9.0.jar" "$runtime_dir/lib/kafka-clients-3.9.0.jar"
+  download "$base/org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36.jar" "$runtime_dir/lib/slf4j-api-1.7.36.jar"
+  download "$base/org/slf4j/slf4j-reload4j/1.7.36/slf4j-reload4j-1.7.36.jar" "$runtime_dir/lib/slf4j-reload4j-1.7.36.jar"
+  download "$base/ch/qos/reload4j/reload4j/1.2.25/reload4j-1.2.25.jar" "$runtime_dir/lib/reload4j-1.2.25.jar"
+  download "$base/org/lz4/lz4-java/1.8.0/lz4-java-1.8.0.jar" "$runtime_dir/lib/lz4-java-1.8.0.jar"
+  download "$base/org/xerial/snappy/snappy-java/1.1.10.5/snappy-java-1.1.10.5.jar" "$runtime_dir/lib/snappy-java-1.1.10.5.jar"
+  download "$base/com/github/luben/zstd-jni/1.5.6-4/zstd-jni-1.5.6-4.jar" "$runtime_dir/lib/zstd-jni-1.5.6-4.jar"
 }
 
 compile_all() {
@@ -104,19 +107,37 @@ compile_all() {
 start_process() {
   local name="$1"
   shift
-  local session="demo-$name"
-  tmux -f /exec-daemon/tmux.portal.conf has-session -t "=$session" 2>/dev/null \
-    && tmux -f /exec-daemon/tmux.portal.conf kill-session -t "$session" || true
-  tmux -f /exec-daemon/tmux.portal.conf new-session -d -s "$session" -c "$root" -- "${SHELL:-bash}" -l
-  tmux -f /exec-daemon/tmux.portal.conf send-keys -t "$session:0.0" \
-    "cd '$root' && export PGHOST='$PGHOST' PGPORT='$PGPORT' PGUSER='$PGUSER' PGPASSWORD='$PGPASSWORD' PGDATABASE='$PGDATABASE' FAKE_DATABASE='$FAKE_DATABASE' KAFKA_BOOTSTRAP='$KAFKA_BOOTSTRAP' KAFKA_TOPIC='$KAFKA_TOPIC' KAFKA_GROUP='$KAFKA_GROUP' ACCESS_PORT='$ACCESS_PORT' LEASE_MS='$LEASE_MS' && java -cp 'out:$runtime_dir/lib/*' $*" C-m
+  local pidfile="$runtime_dir/pids/$name.pid"
+  local logfile="$runtime_dir/pids/$name.log"
+  if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    kill "$(cat "$pidfile")" 2>/dev/null || true
+    sleep 0.5
+  fi
+  (
+    cd "$root"
+    export PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE FAKE_DATABASE
+    export KAFKA_BOOTSTRAP KAFKA_TOPIC KAFKA_GROUP ACCESS_PORT LEASE_MS
+    exec java -cp "out:$runtime_dir/lib/*" "$@"
+  ) >"$logfile" 2>&1 &
+  echo $! >"$pidfile"
 }
 
 stop_process() {
   local name="$1"
-  local session="demo-$name"
-  tmux -f /exec-daemon/tmux.portal.conf has-session -t "=$session" 2>/dev/null \
-    && tmux -f /exec-daemon/tmux.portal.conf kill-session -t "$session" || true
+  local pidfile="$runtime_dir/pids/$name.pid"
+  if [[ -f "$pidfile" ]]; then
+    local pid
+    pid=$(cat "$pidfile")
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      for _ in $(seq 1 20); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.2
+      done
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f "$pidfile"
+  fi
 }
 
 cleanup() {
@@ -127,23 +148,23 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# stop leftover debug sessions that may hold the access port
-for s in dbg-access dbg-dispatch dbg-runtime demo-access demo-dispatch demo-runtime-a demo-runtime-b; do
-  tmux -f /exec-daemon/tmux.portal.conf has-session -t "=$s" 2>/dev/null \
-    && tmux -f /exec-daemon/tmux.portal.conf kill-session -t "$s" || true
-done
-
-ensure_postgres
-ensure_kafka
+ensure_docker_services
 ensure_jars
 compile_all
 
 java -cp "out:$runtime_dir/lib/*" live.EnsureSchema \
   || fail "PostgreSQL schema 建不起来。"
+
+pg_version=$(psql_runtime -Atc 'SELECT version()')
+# pipefail 下 head 会提前关管道，这里允许描述命令非零退出。
+kafka_desc=$(compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --describe --topic "$KAFKA_TOPIC" 2>/dev/null | head -1 | tr -d '\r' || true)
+[[ -n "$kafka_desc" ]] || kafka_desc="topic=$KAFKA_TOPIC (Docker apache/kafka:3.9.0)"
 {
-  echo "PostgreSQL=$(PGPASSWORD=$PGPASSWORD psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE -Atc 'SELECT version()')"
-  echo "Kafka=$("$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" --describe --topic "$KAFKA_TOPIC" | head -1)"
+  echo "PostgreSQL=$pg_version"
+  echo "Kafka=$kafka_desc"
+  echo "服务启动方式=Docker Compose ($compose_file)"
   echo "消费组=$KAFKA_GROUP"
+  echo "租约等待=自然到期（脚本不改 lease_expires_at）"
   echo "进程内Database=未使用"
   echo "进程内KafkaLog=未使用"
 } > "$root/docs/demo/环境.txt"
@@ -158,63 +179,71 @@ for _ in $(seq 1 50); do
   fi
   sleep 0.2
 done
-curl -fsS "http://127.0.0.1:$ACCESS_PORT/health" >/dev/null || fail "接入层没有起来"
+curl -fsS "http://127.0.0.1:$ACCESS_PORT/health" >/dev/null || fail "接入层没有起来。日志：$runtime_dir/pids/access.log"
 
-# 分段跑演示，便于中途切换 Worker
 java -cp "out:$runtime_dir/lib/*" demo.LiveDemoDriver accept | tee "$root/docs/demo/三段演示.txt"
 task_id=$(awk '/^受理 /{print $3; exit}' "$root/docs/demo/三段演示.txt")
 [[ -n "$task_id" ]] || fail "没有拿到 task_id"
 
-# 等第一次接管
 ready=0
 for _ in $(seq 1 100); do
-  owner=$(PGPASSWORD=$PGPASSWORD psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
-    "SELECT owner FROM tasks WHERE task_id='$task_id' AND epoch=1 AND owner IS NOT NULL")
+  owner=$(psql_runtime -Atc "SELECT owner FROM tasks WHERE task_id='$task_id' AND epoch=1 AND owner IS NOT NULL")
   if [[ -n "$owner" ]]; then
     ready=1
     break
   fi
   sleep 0.2
 done
-[[ "$ready" -eq 1 ]] || fail "pod-a 没有接管。看 demo-runtime-a 日志。"
+[[ "$ready" -eq 1 ]] || fail "pod-a 没有接管。日志：$runtime_dir/pids/runtime-a.log"
 {
   echo "接管 epoch=1 owner=$owner"
 } | tee -a "$root/docs/demo/三段演示.txt"
 
 java -cp "out:$runtime_dir/lib/*" demo.LiveDemoDriver reject "$task_id" "$owner" | tee -a "$root/docs/demo/三段演示.txt"
 
-# 停掉第一个 Runtime，把租约弄过期，再起第二个
+# 杀掉第一个 Worker，只等租约自己到期，不改 lease_expires_at。
 stop_process runtime-a
-PGPASSWORD=$PGPASSWORD psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 -c \
-  "UPDATE tasks SET lease_expires_at=now() - interval '1 second' WHERE task_id='$task_id'" >/dev/null
+echo "已杀掉 runtime-a，等待租约自然到期（LEASE_MS=${LEASE_MS}）…" | tee -a "$root/docs/demo/三段演示.txt"
+
+expired=0
+for _ in $(seq 1 120); do
+  row=$(psql_runtime -Atc "SELECT CASE WHEN lease_expires_at <= now() THEN 'expired' ELSE 'live' END FROM tasks WHERE task_id='$task_id'")
+  if [[ "$row" == "expired" ]]; then
+    expired=1
+    break
+  fi
+  sleep 0.25
+done
+[[ "$expired" -eq 1 ]] || fail "等待租约自然到期超时。脚本没有改 lease_expires_at。"
+echo "租约已自然到期" | tee -a "$root/docs/demo/三段演示.txt"
+
 start_process runtime-b live.LiveWorkerLoop pod-b
 
 ready=0
-for _ in $(seq 1 150); do
-  next=$(PGPASSWORD=$PGPASSWORD psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -Atc \
+for _ in $(seq 1 200); do
+  next=$(psql_runtime -Atc \
     "SELECT owner FROM tasks WHERE task_id='$task_id' AND epoch=2 AND owner IS NOT NULL AND owner<>'$owner'")
   if [[ -n "$next" ]]; then
     ready=1
     break
   fi
-  sleep 0.2
+  sleep 0.25
 done
-[[ "$ready" -eq 1 ]] || fail "pod-b 没有从恢复点继续。"
+[[ "$ready" -eq 1 ]] || fail "pod-b 没有在租约自然到期后把 epoch 接到 2。日志：$runtime_dir/pids/runtime-b.log"
 {
   echo "另一个Worker继续 epoch=2 owner=$next"
 } | tee -a "$root/docs/demo/三段演示.txt"
 
 java -cp "out:$runtime_dir/lib/*" demo.LiveDemoDriver fakewrite "$task_id" | tee -a "$root/docs/demo/三段演示.txt"
 
-grep -q '任务数=1' "$root/docs/demo/三段演示.txt" || fail "同幂等键不是一条任务"
-grep -q '代次拒绝' "$root/docs/demo/三段演示.txt" || fail "没有看到代次拒绝"
-grep -q '另一个Worker继续 epoch=2' "$root/docs/demo/三段演示.txt" || fail "没有看到另一个 Worker 继续"
-grep -q '写入次数=1' "$root/docs/demo/三段演示.txt" || fail "假写写了第二次"
-grep -q '受理' "$root/docs/demo/三段演示.txt" || fail "没有受理"
-grep -q '投递' "$root/docs/demo/三段演示.txt" || fail "没有投递"
-grep -q '接管' "$root/docs/demo/三段演示.txt" || fail "没有接管"
-grep -q '按原编号查询' "$root/docs/demo/三段演示.txt" || fail "没有按原编号查询"
-grep -q '进程内Database=未使用' "$root/docs/demo/环境.txt" || fail "环境记录缺失"
-grep -q 'PostgreSQL=' "$root/docs/demo/环境.txt" || fail "没有记录真实 PostgreSQL"
+# 三条硬条件
+grep -q '任务数=1' "$root/docs/demo/三段演示.txt" || fail "同幂等键任务数不是 1"
+grep -q '另一个Worker继续 epoch=2' "$root/docs/demo/三段演示.txt" || fail "后一个进程没有把 epoch 接到 2"
+grep -q '写入次数=1' "$root/docs/demo/三段演示.txt" || fail "同一个 operation_id 写入次数不是 1"
 
-echo "演示通过：已连 PostgreSQL 与 Kafka，三段事故都看到了。"
+grep -q '代次拒绝' "$root/docs/demo/三段演示.txt" || fail "没有看到代次拒绝"
+grep -q '服务启动方式=Docker Compose' "$root/docs/demo/环境.txt" || fail "环境记录没有标明 Docker Compose"
+grep -q '租约等待=自然到期' "$root/docs/demo/环境.txt" || fail "环境记录没有标明自然到期"
+grep -q '进程内Database=未使用' "$root/docs/demo/环境.txt" || fail "环境记录缺失"
+
+echo "演示通过：Docker 拉起 PostgreSQL/Kafka，杀掉第一个 Worker 后只等租约到期，三条都成立。"

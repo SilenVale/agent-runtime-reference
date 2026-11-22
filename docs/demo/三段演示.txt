@@ -1,7 +1,9 @@
-受理 202 task-8d45c771-7744-4ca4-90c6-951b285b0101
-再次受理 task-8d45c771-7744-4ca4-90c6-951b285b0101 任务数=1
-投递 msg-ea8238cf-ff6a-43d1-9d26-4b311904bd31
+受理 202 task-8107b7cd-f102-45d0-a6d2-4307aecd6097
+再次受理 task-8107b7cd-f102-45d0-a6d2-4307aecd6097 任务数=1
+投递 msg-2e8f949d-f0c1-4f57-84f6-37ae85efce72
 接管 epoch=1 owner=pod-a
 代次拒绝
+已杀掉 runtime-a，等待租约自然到期（LEASE_MS=5000）…
+租约已自然到期
 另一个Worker继续 epoch=2 owner=pod-b
-按原编号查询 op-58681ad1-2122-4f00-951a-e7661e07f934 结果=done 写入次数=1
+按原编号查询 op-89ad34fc-a1d6-41e6-852b-94cb150808eb 结果=done 写入次数=1

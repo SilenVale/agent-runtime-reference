@@ -37,28 +37,47 @@ public final class Chapter14Tests {
         Path env = Path.of("docs/demo/环境.txt");
         Path demo = Path.of("docs/demo/三段演示.txt");
         if (!Files.exists(env) || !Files.exists(demo)) {
-            throw new AssertionError("请先跑 scripts/demo.sh，留下真实 PostgreSQL/Kafka 的演示记录");
+            throw new AssertionError("请先跑 scripts/demo.sh");
         }
         String envText = Files.readString(env);
         String demoText = Files.readString(demo);
-        if (!envText.contains("PostgreSQL=") || envText.contains("进程内Database=使用")) {
-            throw new AssertionError("演示没有连上真实 PostgreSQL");
+        if (!envText.contains("服务启动方式=Docker Compose")) {
+            throw new AssertionError("演示必须只靠 Docker Compose 起 PostgreSQL 和 Kafka");
         }
-        if (!envText.contains("Kafka=") || !envText.contains("进程内KafkaLog=未使用")) {
-            throw new AssertionError("演示没有连上真实 Kafka");
+        if (!envText.contains("租约等待=自然到期")) {
+            throw new AssertionError("杀掉第一个 Worker 后必须只等租约自然到期");
         }
-        if (!envText.contains("进程内Database=未使用")) {
-            throw new AssertionError("演示不能用进程内 Database");
+        if (demoText.contains("UPDATE tasks SET lease_expires_at") || envText.contains("脚本改租约")) {
+            throw new AssertionError("禁止用脚本改 lease_expires_at");
         }
-        for (String step : List.of("受理", "投递", "接管", "代次拒绝", "按原编号查询")) {
+        if (!envText.contains("进程内Database=未使用") || !envText.contains("进程内KafkaLog=未使用")) {
+            throw new AssertionError("演示不能用进程内模型");
+        }
+        for (String step : List.of("受理", "投递", "接管", "代次拒绝", "按原编号查询", "租约已自然到期")) {
             if (!demoText.contains(step)) {
                 throw new AssertionError("演示缺少步骤：" + step);
             }
         }
-        if (!demoText.contains("任务数=1") || !demoText.contains("epoch=2") || !demoText.contains("写入次数=1")) {
-            throw new AssertionError("三段演示没有都接住：" + demoText);
+        if (!demoText.contains("任务数=1")) {
+            throw new AssertionError("同幂等键任务数不是 1");
         }
-        System.out.println("通过 九段说明和真实服务三段演示");
+        if (!demoText.contains("epoch=2")) {
+            throw new AssertionError("后一个进程没有把 epoch 接到 2");
+        }
+        if (!demoText.contains("写入次数=1")) {
+            throw new AssertionError("同一个 operation_id 写入次数不是 1");
+        }
+        String progress = Files.readString(Path.of("验收/进度.md"));
+        boolean portfolioPassed = false;
+        for (String line : progress.split("\n")) {
+            if (line.startsWith("| 14 |") && line.contains("| 通过 |")) {
+                portfolioPassed = true;
+            }
+        }
+        if (!portfolioPassed) {
+            throw new AssertionError("作品集在进度表里还不是通过");
+        }
+        System.out.println("通过 九段说明和 Docker 自然租约三段演示");
         System.out.println("测试 1 项，通过 1 项");
     }
 }

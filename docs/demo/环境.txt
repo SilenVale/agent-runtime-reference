@@ -1,5 +1,7 @@
-PostgreSQL=PostgreSQL 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
-Kafka=Topic: runtime.schedule	TopicId: v-JNuHZNSfmcKlrioSeSgw	PartitionCount: 1	ReplicationFactor: 1	Configs: segment.bytes=1073741824
-消费组=runtime-workers-demo-32501
+PostgreSQL=PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+Kafka=Topic: runtime.schedule	TopicId: WK0MKFrrQ6asWYUKJ6ojyw	PartitionCount: 1	ReplicationFactor: 1	Configs: 
+服务启动方式=Docker Compose (/workspace/deploy/demo/docker-compose.yml)
+消费组=runtime-workers-demo-53884
+租约等待=自然到期（脚本不改 lease_expires_at）
 进程内Database=未使用
 进程内KafkaLog=未使用

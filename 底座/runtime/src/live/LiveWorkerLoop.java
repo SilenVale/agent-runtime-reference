@@ -19,6 +19,9 @@ import org.apache.kafka.common.serialization.StringDeserializer;
  * Runtime 进程：消费调度、取得执行权、恢复扫描。关闭自动提交。
  */
 public final class LiveWorkerLoop {
+    private static boolean crashBeforeTakeoverCommit =
+            "1".equals(System.getenv("CRASH_BEFORE_TAKEOVER_COMMIT"));
+
     public static void main(String[] args) throws Exception {
         LiveConfig config = LiveConfig.fromEnv();
         String podId = args.length > 0 ? args[0] : "pod-" + UUID.randomUUID();
@@ -36,7 +39,8 @@ public final class LiveWorkerLoop {
         // 不设 group.instance.id：强杀后好尽快再均衡。
         try (KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props)) {
             consumer.subscribe(Collections.singletonList(config.topic));
-            System.out.println("process=runtime pod=" + podId + " group=" + config.group);
+            System.out.println("process=runtime pod=" + podId + " group=" + config.group
+                    + " crash_before_takeover=" + crashBeforeTakeoverCommit);
             long lastScan = 0L;
             while (true) {
                 long now = System.currentTimeMillis();
@@ -47,14 +51,19 @@ public final class LiveWorkerLoop {
                 ConsumerRecords<String, String> records = consumer.poll(Duration.ofMillis(300));
                 for (ConsumerRecord<String, String> record : records) {
                     System.out.println("收到 " + record.value());
-                    handle(config, podId, record.value());
-                    consumer.commitSync();
+                    System.out.println("trace=slot");
+                    boolean committed = handle(config, podId, record.value());
+                    if (committed) {
+                        consumer.commitSync();
+                    }
+                    System.out.println("trace=slot_release");
                 }
             }
         }
     }
 
-    static void handle(LiveConfig config, String podId, String payload) throws Exception {
+    /** @return true if takeover/inbox conclusion was committed (offset may advance) */
+    static boolean handle(LiveConfig config, String podId, String payload) throws Exception {
         String[] parts = payload.split("\\|", -1);
         String messageId = parts[0];
         String taskId = parts[1];
@@ -62,6 +71,7 @@ public final class LiveWorkerLoop {
         String scheduleType = parts[4];
         String runVersion = parts[5];
         try (Connection connection = Pg.connect(config)) {
+            System.out.println("trace=tx");
             try (PreparedStatement inbox = connection.prepareStatement(
                     "SELECT conclusion, epoch_after FROM inbox WHERE consumer=? AND message_id=?")) {
                 inbox.setString(1, config.group);
@@ -69,8 +79,9 @@ public final class LiveWorkerLoop {
                 try (ResultSet rs = inbox.executeQuery()) {
                     if (rs.next()) {
                         connection.commit();
-                        System.out.println("复用 " + messageId + " " + rs.getString("conclusion"));
-                        return;
+                        System.out.println("复用 " + messageId + " " + rs.getString("conclusion")
+                                + " consumer=" + config.group);
+                        return true;
                     }
                 }
             }
@@ -86,7 +97,7 @@ public final class LiveWorkerLoop {
                 try (ResultSet rs = task.executeQuery()) {
                     if (!rs.next()) {
                         connection.rollback();
-                        return;
+                        return false;
                     }
                     state = rs.getString("state");
                     epoch = rs.getInt("epoch");
@@ -109,7 +120,46 @@ public final class LiveWorkerLoop {
                 saveInbox(connection, config.group, messageId, "IGNORED", epoch);
                 connection.commit();
                 System.out.println("忽略 " + messageId);
-                return;
+                return true;
+            }
+            Integer limit = null;
+            int used = 0;
+            try (PreparedStatement quota = connection.prepareStatement(
+                    "SELECT limit_count, used_count FROM quotas WHERE tenant=? FOR UPDATE")) {
+                quota.setString(1, tenant);
+                try (ResultSet rs = quota.executeQuery()) {
+                    if (rs.next()) {
+                        limit = rs.getInt("limit_count");
+                        used = rs.getInt("used_count");
+                    }
+                }
+            }
+            if (limit != null && used >= limit) {
+                int nextSeq;
+                try (PreparedStatement max = connection.prepareStatement(
+                        "SELECT COALESCE(MAX(dispatch_seq),0) FROM outbox WHERE task_id=?")) {
+                    max.setString(1, taskId);
+                    try (ResultSet seq = max.executeQuery()) {
+                        seq.next();
+                        nextSeq = seq.getInt(1) + 1;
+                    }
+                }
+                try (PreparedStatement insert = connection.prepareStatement(
+                        """
+                        INSERT INTO outbox(message_id, task_id, dispatch_seq, expected_epoch, schedule_type, status, run_version)
+                        VALUES (?, ?, ?, ?, 'DEFER', 'PENDING', ?)
+                        """)) {
+                    insert.setString(1, "msg-" + UUID.randomUUID());
+                    insert.setString(2, taskId);
+                    insert.setInt(3, nextSeq);
+                    insert.setInt(4, epoch);
+                    insert.setString(5, version);
+                    insert.executeUpdate();
+                }
+                saveInbox(connection, config.group, messageId, "DEFERRED", epoch);
+                connection.commit();
+                System.out.println("延期 " + taskId + " epoch=" + epoch + " owner=null");
+                return true;
             }
             int newEpoch = epoch + 1;
             String nextState = "ACCEPTED".equals(state) ? "RUNNING" : state;
@@ -124,7 +174,14 @@ public final class LiveWorkerLoop {
                 update.setInt(6, epoch);
                 if (update.executeUpdate() != 1) {
                     connection.rollback();
-                    return;
+                    return false;
+                }
+            }
+            if (limit != null) {
+                try (PreparedStatement bump = connection.prepareStatement(
+                        "UPDATE quotas SET used_count=used_count+1 WHERE tenant=?")) {
+                    bump.setString(1, tenant);
+                    bump.executeUpdate();
                 }
             }
             saveInbox(connection, config.group, messageId, "TAKEN", newEpoch);
@@ -135,8 +192,15 @@ public final class LiveWorkerLoop {
                 event.setString(3, taskId);
                 event.executeUpdate();
             }
+            if (crashBeforeTakeoverCommit) {
+                crashBeforeTakeoverCommit = false;
+                connection.rollback();
+                System.out.println("T2提交前退出 " + taskId + " epoch仍为查询值");
+                return false;
+            }
             connection.commit();
             System.out.println("接管 " + taskId + " epoch=" + newEpoch + " owner=" + podId + " tenant=" + tenant);
+            return true;
         }
     }
 

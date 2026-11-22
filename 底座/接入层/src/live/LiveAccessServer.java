@@ -34,14 +34,20 @@ public final class LiveAccessServer {
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         Map<String, String> form = parse(body);
         try {
+            boolean abortBeforeCommit = "1".equals(form.getOrDefault("abort", "0"));
             AcceptResult result = accept.accept(
                     form.getOrDefault("tenant", "tenant"),
                     form.getOrDefault("actor", "actor"),
                     form.getOrDefault("key", "key"),
                     form.getOrDefault("digest", "digest"),
-                    Long.parseLong(form.getOrDefault("budget", "100")));
+                    Long.parseLong(form.getOrDefault("budget", "100")),
+                    abortBeforeCommit);
             if (result.status() == 409) {
                 write(exchange, 409, "conflict");
+                return;
+            }
+            if (result.status() == 500) {
+                write(exchange, 500, "not_committed");
                 return;
             }
             write(exchange, 202, "task_id=" + result.taskId());

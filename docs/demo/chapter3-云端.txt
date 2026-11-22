@@ -1,0 +1,43 @@
+服务=postgres:16.15:5432 apache/kafka:3.9.0:9092
+进程=live.LiveAccessServer live.LiveDispatchLoop live.LiveWorkerLoop
+消费组=runtime-workers-ch3-172109 LEASE_MS=5000
+## 规则3.2 T1
+提交前退出 status=500 body=not_committed
+提交前四样 tasks=0 idem=0 events=0 outbox=0
+受理 status=202 task_id=task-f879d7f7-a780-48c2-b306-b75b02d535f4
+T1已提交 event_id=event-51731eb3-a50f-4f91-9adf-27023acc7b85 message_id=msg-acbdf1c1-3e2c-4289-bbf9-e7fe488879ff type=任务已受理 schedule=START seq=1 expected_epoch=0 state=ACCEPTED epoch=0 owner=null
+事件ID与消息ID分开 same=false
+响应丢失后原键 task_id=task-f879d7f7-a780-48c2-b306-b75b02d535f4 任务数=1
+同键异参 status=409 任务数=1
+## 规则3.3 初始与接管
+初始 epoch=0 owner=null lease=null state=ACCEPTED
+接管 epoch=1 owner=pod-a state=RUNNING
+Inbox consumer=runtime-workers-ch3-172109 message_id=msg-acbdf1c1-3e2c-4289-bbf9-e7fe488879ff conclusion=TAKEN epoch_after=1 owner=pod-a task_epoch=1 消费组非Pod=true
+Inbox行数=1
+## 规则3.4 投递确认前退出
+确认前退出后 pending message_id=msg-86535e80-d082-4d68-9223-dee78a9e85e1
+确认前退出 msg-86535e80-d082-4d68-9223-dee78a9e85e1 kafka_offset=10
+再投后 outbox status=SENT message_id=msg-86535e80-d082-4d68-9223-dee78a9e85e1 kafka命中=2
+接管 epoch=1 owner=pod-a state=RUNNING
+## 规则3.5 Inbox
+Inbox consumer=runtime-workers-ch3-172109 message_id=msg-86535e80-d082-4d68-9223-dee78a9e85e1 conclusion=TAKEN epoch_after=1 owner=pod-a task_epoch=1 消费组非Pod=true
+Inbox行数=1
+task state=RUNNING epoch=1 owner=pod-a
+quota tenant=tenant limit=0
+## 规则3.6 额度不足
+延期 outbox message_id=msg-9ed70c6c-f9e3-4d92-bd27-2812fb7c0717 seq=2 expected_epoch=0 status=SENT type=DEFER
+task state=ACCEPTED epoch=0 owner=null
+trace=slot
+trace=tx
+trace=slot
+trace=tx
+trace=slot
+名额顺序 slot_line=6 tx_line=7
+## 规则3.7 T2与恢复
+T2提交前退出后 epoch=0 inbox行数=0
+T2提交前退出 task-4071efc0-6052-424c-9cc9-995b04f1766c epoch仍为查询值
+接管 epoch=1 owner=pod-b state=RUNNING
+等待租约自然到期…
+recovery message_id=msg-625f2e2a-d49a-4f65-9d89-6b001c7e131a seq=2 expected_epoch=1 status=PENDING 新消息ID=true
+扫描后任务 epoch=1 recovery条数=1
+recovery条数确认=1

@@ -15,6 +15,8 @@ import org.apache.kafka.common.serialization.StringSerializer;
  * 消息投递进程：读已提交的 Outbox，发到 Kafka，确认后再标记已发送。
  */
 public final class LiveDispatchLoop {
+    private static boolean abortAfterSendOnce = "1".equals(System.getenv("DISPATCH_ABORT_AFTER_SEND"));
+
     public static void main(String[] args) throws Exception {
         LiveConfig config = LiveConfig.fromEnv();
         Properties props = new Properties();
@@ -24,7 +26,7 @@ public final class LiveDispatchLoop {
         props.put(ProducerConfig.ACKS_CONFIG, "all");
         props.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, "true");
         try (KafkaProducer<String, String> producer = new KafkaProducer<>(props)) {
-            System.out.println("process=dispatch");
+            System.out.println("process=dispatch abort_after_send=" + abortAfterSendOnce);
             while (true) {
                 pumpOnce(config, producer);
                 Thread.sleep(200);
@@ -57,6 +59,13 @@ public final class LiveDispatchLoop {
                 if (metadata == null) {
                     connection.rollback();
                     return marked;
+                }
+                if (abortAfterSendOnce) {
+                    abortAfterSendOnce = false;
+                    connection.rollback();
+                    System.out.println("确认前退出 " + messageId + " kafka_offset=" + metadata.offset());
+                    // 退出进程，避免下一轮循环把同一条标成 SENT。
+                    System.exit(2);
                 }
                 try (PreparedStatement update = connection.prepareStatement(
                         "UPDATE outbox SET status='SENT' WHERE message_id=? AND status='PENDING'")) {

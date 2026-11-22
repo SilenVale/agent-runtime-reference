@@ -96,6 +96,13 @@ public final class Pg {
                       status TEXT NOT NULL
                     )
                     """);
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS quotas (
+                      tenant TEXT PRIMARY KEY,
+                      limit_count INT NOT NULL,
+                      used_count INT NOT NULL DEFAULT 0
+                    )
+                    """);
             statement.execute("SELECT pg_advisory_unlock(42001)");
             connection.commit();
         }
@@ -116,7 +123,7 @@ public final class Pg {
 
     public static void resetDemoData(LiveConfig config) throws SQLException {
         try (Connection connection = connect(config); Statement statement = connection.createStatement()) {
-            statement.execute("TRUNCATE tasks, idempotency, events, outbox, inbox, operations");
+            statement.execute("TRUNCATE tasks, idempotency, events, outbox, inbox, operations, quotas");
             connection.commit();
         }
         try (Connection connection = connectFake(config); Statement statement = connection.createStatement()) {

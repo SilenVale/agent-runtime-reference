@@ -16,6 +16,12 @@ public final class LiveAcceptService {
 
     public AcceptResult accept(String tenant, String actor, String key, String digest, long budgetLimit)
             throws Exception {
+        return accept(tenant, actor, key, digest, budgetLimit, false);
+    }
+
+    public AcceptResult accept(
+            String tenant, String actor, String key, String digest, long budgetLimit, boolean abortBeforeCommit)
+            throws Exception {
         try (Connection connection = Pg.connect(config)) {
             try (PreparedStatement existing = connection.prepareStatement(
                     "SELECT task_id, param_digest FROM idempotency WHERE tenant=? AND actor=? AND key=?")) {
@@ -72,6 +78,10 @@ public final class LiveAcceptService {
                 outbox.setString(1, messageId);
                 outbox.setString(2, taskId);
                 outbox.executeUpdate();
+            }
+            if (abortBeforeCommit) {
+                connection.rollback();
+                return AcceptResult.notCommitted();
             }
             connection.commit();
             return AcceptResult.accepted(taskId);

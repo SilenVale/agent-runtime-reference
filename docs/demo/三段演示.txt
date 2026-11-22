@@ -1,0 +1,7 @@
+受理 202 task-1
+再次受理 task-1 任务数=1
+投递 msg-3
+接管 epoch=1 owner=pod-a
+代次拒绝
+另一个Worker继续 epoch=2 owner=pod-b
+按原编号查询 op-7 结果=done 写入次数=1

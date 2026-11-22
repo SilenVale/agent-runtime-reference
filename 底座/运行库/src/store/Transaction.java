@@ -17,6 +17,7 @@ public final class Transaction implements AutoCloseable {
     private final Map<String, InboxRow> inbox;
     private final Map<String, QuotaRow> quotas;
     private final Map<String, BudgetCall> budgetCalls;
+    private final Map<String, Integer> followUps;
     private final List<SessionNote> sessions;
     private boolean finished;
 
@@ -32,6 +33,7 @@ public final class Transaction implements AutoCloseable {
         this.inbox = new HashMap<>(database.inbox);
         this.quotas = new HashMap<>(database.quotas);
         this.budgetCalls = new HashMap<>(database.budgetCalls);
+        this.followUps = new HashMap<>(database.followUps);
         this.sessions = new ArrayList<>(database.sessions);
     }
 
@@ -167,6 +169,15 @@ public final class Transaction implements AutoCloseable {
         return budgetCalls.get(callId);
     }
 
+    public int followUps(String taskId) {
+        return followUps.getOrDefault(taskId, 0);
+    }
+
+    public void saveFollowUps(String taskId, int count) {
+        ensureOpen();
+        followUps.put(taskId, count);
+    }
+
     public OperationRow operationForNode(String taskId, String nodeKey) {
         for (OperationRow row : operations.values()) {
             if (row.taskId().equals(taskId) && nodeKey != null && nodeKey.equals(row.nodeKey())) {
@@ -188,6 +199,7 @@ public final class Transaction implements AutoCloseable {
         replace(database.inbox, inbox);
         replace(database.quotas, quotas);
         replace(database.budgetCalls, budgetCalls);
+        replace(database.followUps, followUps);
         database.sessions.clear();
         database.sessions.addAll(sessions);
         finished = true;

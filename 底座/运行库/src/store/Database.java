@@ -20,6 +20,7 @@ public final class Database {
     final Map<String, InboxRow> inbox = new HashMap<>();
     final Map<String, QuotaRow> quotas = new HashMap<>();
     final Map<String, BudgetCall> budgetCalls = new HashMap<>();
+    final Map<String, Integer> followUps = new HashMap<>();
     final List<SessionNote> sessions = new ArrayList<>();
     private long now;
 
@@ -73,6 +74,30 @@ public final class Database {
 
     public BudgetCall budgetCall(String callId) {
         return budgetCalls.get(callId);
+    }
+
+    public int followUps(String taskId) {
+        return followUps.getOrDefault(taskId, 0);
+    }
+
+    public String operationForAny(String taskId) {
+        for (OperationRow row : operations.values()) {
+            if (row.taskId().equals(taskId)) {
+                return row.operationId();
+            }
+        }
+        return null;
+    }
+
+    public List<EventRow> eventsOf(String taskId) {
+        List<EventRow> rows = new ArrayList<>();
+        for (EventRow event : events.values()) {
+            if (event.taskId().equals(taskId)) {
+                rows.add(event);
+            }
+        }
+        rows.sort((left, right) -> Integer.compare(left.eventSeq(), right.eventSeq()));
+        return rows;
     }
 
     public Collection<IdempotencyRow> idempotency() {

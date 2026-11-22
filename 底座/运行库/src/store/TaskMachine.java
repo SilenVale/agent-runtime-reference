@@ -25,6 +25,9 @@ public final class TaskMachine {
 
     public void submit(Transaction tx, String taskId, int epoch, String owner, TaskState target) {
         TaskRow task = requireRight(tx, taskId, epoch, owner);
+        if (task.state() == TaskState.CANCEL_REQUESTED && target != TaskState.CANCELLED) {
+            throw new Rejected("状态已变化");
+        }
         tx.saveTask(task.toBuilder().state(target).build());
     }
 

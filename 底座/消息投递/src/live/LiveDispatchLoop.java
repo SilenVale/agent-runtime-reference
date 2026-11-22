@@ -3,7 +3,6 @@ package live;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.time.Duration;
 import java.util.Properties;
 
 import org.apache.kafka.clients.producer.KafkaProducer;

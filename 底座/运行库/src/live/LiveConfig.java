@@ -4,7 +4,9 @@ public final class LiveConfig {
     public final String pgUrl;
     public final String pgUser;
     public final String pgPassword;
-    public final String fakeUrl;
+    public final String fakeJdbcUrl;
+    public final String fakeUser;
+    public final String fakePassword;
     public final String kafkaBootstrap;
     public final String topic;
     public final String group;
@@ -15,7 +17,9 @@ public final class LiveConfig {
             String pgUrl,
             String pgUser,
             String pgPassword,
-            String fakeUrl,
+            String fakeJdbcUrl,
+            String fakeUser,
+            String fakePassword,
             String kafkaBootstrap,
             String topic,
             String group,
@@ -24,7 +28,9 @@ public final class LiveConfig {
         this.pgUrl = pgUrl;
         this.pgUser = pgUser;
         this.pgPassword = pgPassword;
-        this.fakeUrl = fakeUrl;
+        this.fakeJdbcUrl = fakeJdbcUrl;
+        this.fakeUser = fakeUser;
+        this.fakePassword = fakePassword;
         this.kafkaBootstrap = kafkaBootstrap;
         this.topic = topic;
         this.group = group;
@@ -38,12 +44,17 @@ public final class LiveConfig {
         String user = env("PGUSER", "runtime");
         String password = env("PGPASSWORD", "runtime");
         String runtimeDb = env("PGDATABASE", "runtime");
-        String fakeDb = env("FAKE_DATABASE", "fake_write");
+        String mysqlHost = env("MYSQL_HOST", "127.0.0.1");
+        String mysqlPort = env("MYSQL_PORT", "3306");
+        String mysqlDb = env("MYSQL_DATABASE", "fake_write");
         return new LiveConfig(
                 "jdbc:postgresql://" + host + ":" + port + "/" + runtimeDb,
                 user,
                 password,
-                "jdbc:postgresql://" + host + ":" + port + "/" + fakeDb,
+                "jdbc:mysql://" + mysqlHost + ":" + mysqlPort + "/" + mysqlDb
+                        + "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC",
+                env("MYSQL_USER", "fake"),
+                env("MYSQL_PASSWORD", "fake"),
                 env("KAFKA_BOOTSTRAP", "127.0.0.1:9092"),
                 env("KAFKA_TOPIC", "runtime.schedule"),
                 env("KAFKA_GROUP", "runtime-workers"),

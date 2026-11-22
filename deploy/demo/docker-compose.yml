@@ -37,3 +37,18 @@ services:
       interval: 3s
       timeout: 10s
       retries: 40
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: fake_write
+      MYSQL_USER: fake
+      MYSQL_PASSWORD: fake
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 3s
+      timeout: 5s
+      retries: 40

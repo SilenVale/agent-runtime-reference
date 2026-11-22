@@ -12,7 +12,7 @@ mkdir -p "$out"
 # 规则测试不编译 live/ 演示路径，避免强依赖本机 Kafka/JDBC jar。
 find "$root/底座" "$root/假业务" -name '*.java' \
   ! -path '*/live/*' \
-  ! -path '*/demo/LiveDemoDriver.java' \
+  ! -path '*/demo/*' \
   | sort > "$out/sources.txt"
 javac --release 21 -encoding UTF-8 -d "$out" @"$out/sources.txt"
 cd "$root"

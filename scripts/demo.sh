@@ -12,11 +12,16 @@ export PGPORT="${PGPORT:-5432}"
 export PGUSER="${PGUSER:-runtime}"
 export PGPASSWORD="${PGPASSWORD:-runtime}"
 export PGDATABASE="${PGDATABASE:-runtime}"
-export FAKE_DATABASE="${FAKE_DATABASE:-fake_write}"
 export KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-127.0.0.1:9092}"
 export KAFKA_TOPIC="${KAFKA_TOPIC:-runtime.schedule}"
 export KAFKA_GROUP="runtime-workers-demo-$$"
 export ACCESS_PORT="${ACCESS_PORT:-8080}"
+# 假写在 MySQL，与任务库（PostgreSQL）分开提交。
+export MYSQL_HOST="${MYSQL_HOST:-127.0.0.1}"
+export MYSQL_PORT="${MYSQL_PORT:-3306}"
+export MYSQL_USER="${MYSQL_USER:-fake}"
+export MYSQL_PASSWORD="${MYSQL_PASSWORD:-fake}"
+export MYSQL_DATABASE="${MYSQL_DATABASE:-fake_write}"
 # 租约短一点，方便演示里等它自己到期。禁止脚本改 lease_expires_at。
 # 只用 DEMO_LEASE_MS，避免外壳里残留的 LEASE_MS 把等待拉长。
 export LEASE_MS="${DEMO_LEASE_MS:-5000}"
@@ -51,34 +56,33 @@ ensure_docker_services() {
   command -v java >/dev/null 2>&1 || fail "本机没有 java。三个进程要用本机 JDK 跑，服务才只用 Docker。"
   command -v javac >/dev/null 2>&1 || fail "本机没有 javac。"
   compose up -d
-  echo "等待 PostgreSQL 与 Kafka（Docker）就绪…"
+  echo "等待 PostgreSQL、Kafka、MySQL（Docker）就绪…"
   ready_pg=0
   ready_kafka=0
-  for _ in $(seq 1 60); do
+  ready_mysql=0
+  for _ in $(seq 1 90); do
     if compose exec -T postgres pg_isready -U "$PGUSER" -d "$PGDATABASE" >/dev/null 2>&1; then
       ready_pg=1
     fi
     if compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --list >/dev/null 2>&1; then
       ready_kafka=1
     fi
-    if [[ "$ready_pg" -eq 1 && "$ready_kafka" -eq 1 ]]; then
+    if compose exec -T mysql mysqladmin ping -h 127.0.0.1 -uroot -proot --silent >/dev/null 2>&1; then
+      ready_mysql=1
+    fi
+    if [[ "$ready_pg" -eq 1 && "$ready_kafka" -eq 1 && "$ready_mysql" -eq 1 ]]; then
       break
     fi
     sleep 1
   done
   [[ "$ready_pg" -eq 1 ]] || fail "Docker 里的 PostgreSQL 没起来。"
   [[ "$ready_kafka" -eq 1 ]] || fail "Docker 里的 Kafka 没起来。"
+  [[ "$ready_mysql" -eq 1 ]] || fail "Docker 里的 MySQL 没起来。"
   compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 \
     --create --if-not-exists --topic "$KAFKA_TOPIC" --partitions 1 --replication-factor 1 >/dev/null
-  # 确认 fake_write 库在（init 脚本只在空数据卷时跑）
-  compose exec -T postgres \
-    env PGPASSWORD="$PGPASSWORD" \
-    psql -U "$PGUSER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='$FAKE_DATABASE'" | grep -q 1 \
-    || compose exec -T postgres \
-      env PGPASSWORD="$PGPASSWORD" \
-      psql -U "$PGUSER" -d postgres -c "CREATE DATABASE $FAKE_DATABASE OWNER $PGUSER" >/dev/null
   echo "PostgreSQL 已由 Docker 提供 $PGHOST:$PGPORT/$PGDATABASE"
   echo "Kafka 已由 Docker 提供 $KAFKA_BOOTSTRAP topic=$KAFKA_TOPIC"
+  echo "MySQL 假写已由 Docker 提供 $MYSQL_HOST:$MYSQL_PORT/$MYSQL_DATABASE"
 }
 
 ensure_jars() {
@@ -90,6 +94,7 @@ ensure_jars() {
     fi
   }
   download "$base/org/postgresql/postgresql/42.7.4/postgresql-42.7.4.jar" "$runtime_dir/lib/postgresql-42.7.4.jar"
+  download "$base/com/mysql/mysql-connector-j/8.4.0/mysql-connector-j-8.4.0.jar" "$runtime_dir/lib/mysql-connector-j-8.4.0.jar"
   download "$base/org/apache/kafka/kafka-clients/3.9.0/kafka-clients-3.9.0.jar" "$runtime_dir/lib/kafka-clients-3.9.0.jar"
   download "$base/org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36.jar" "$runtime_dir/lib/slf4j-api-1.7.36.jar"
   download "$base/org/slf4j/slf4j-reload4j/1.7.36/slf4j-reload4j-1.7.36.jar" "$runtime_dir/lib/slf4j-reload4j-1.7.36.jar"
@@ -115,7 +120,8 @@ start_process() {
   fi
   (
     cd "$root"
-    export PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE FAKE_DATABASE
+    export PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE
+    export MYSQL_HOST MYSQL_PORT MYSQL_USER MYSQL_PASSWORD MYSQL_DATABASE
     export KAFKA_BOOTSTRAP KAFKA_TOPIC KAFKA_GROUP ACCESS_PORT LEASE_MS
     exec java -cp "out:$runtime_dir/lib/*" "$@"
   ) >"$logfile" 2>&1 &
@@ -159,9 +165,11 @@ pg_version=$(psql_runtime -Atc 'SELECT version()')
 # pipefail 下 head 会提前关管道，这里允许描述命令非零退出。
 kafka_desc=$(compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092 --describe --topic "$KAFKA_TOPIC" 2>/dev/null | head -1 | tr -d '\r' || true)
 [[ -n "$kafka_desc" ]] || kafka_desc="topic=$KAFKA_TOPIC (Docker apache/kafka:3.9.0)"
+mysql_version=$(compose exec -T mysql mysql -N -uroot -proot -e 'SELECT VERSION();' 2>/dev/null | tr -d '\r')
 {
   echo "PostgreSQL=$pg_version"
   echo "Kafka=$kafka_desc"
+  echo "MySQL假写=$mysql_version db=$MYSQL_DATABASE"
   echo "服务启动方式=Docker Compose ($compose_file)"
   echo "消费组=$KAFKA_GROUP"
   echo "租约等待=自然到期（脚本不改 lease_expires_at）"

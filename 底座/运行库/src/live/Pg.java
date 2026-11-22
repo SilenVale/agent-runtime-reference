@@ -18,11 +18,12 @@ public final class Pg {
         return connection;
     }
 
+    /** 假写库：MySQL，与任务库分开提交。 */
     public static Connection connectFake(LiveConfig config) throws SQLException {
         Properties props = new Properties();
-        props.setProperty("user", config.pgUser);
-        props.setProperty("password", config.pgPassword);
-        Connection connection = DriverManager.getConnection(config.fakeUrl, props);
+        props.setProperty("user", config.fakeUser);
+        props.setProperty("password", config.fakePassword);
+        Connection connection = DriverManager.getConnection(config.fakeJdbcUrl, props);
         connection.setAutoCommit(false);
         return connection;
     }
@@ -103,27 +104,46 @@ public final class Pg {
                       used_count INT NOT NULL DEFAULT 0
                     )
                     """);
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS checkpoints (
+                      checkpoint_id TEXT PRIMARY KEY,
+                      task_id TEXT NOT NULL,
+                      epoch INT NOT NULL,
+                      node_key TEXT NOT NULL
+                    )
+                    """);
+            statement.execute("""
+                    CREATE TABLE IF NOT EXISTS budget_calls (
+                      call_id TEXT PRIMARY KEY,
+                      task_id TEXT NOT NULL,
+                      reservation_id TEXT NOT NULL,
+                      amount BIGINT NOT NULL,
+                      settled BIGINT NOT NULL DEFAULT 0,
+                      state TEXT NOT NULL
+                    )
+                    """);
             statement.execute("SELECT pg_advisory_unlock(42001)");
             connection.commit();
         }
         try (Connection connection = connectFake(config); Statement statement = connection.createStatement()) {
-            statement.execute("SELECT pg_advisory_lock(42002)");
+            statement.execute("SELECT GET_LOCK('fake_write_schema', 10)");
             statement.execute("""
                     CREATE TABLE IF NOT EXISTS fake_results (
-                      operation_id TEXT PRIMARY KEY,
-                      param_digest TEXT NOT NULL,
+                      operation_id VARCHAR(128) PRIMARY KEY,
+                      param_digest VARCHAR(512) NOT NULL,
                       body TEXT NOT NULL,
                       write_count INT NOT NULL DEFAULT 1
                     )
                     """);
-            statement.execute("SELECT pg_advisory_unlock(42002)");
+            statement.execute("SELECT RELEASE_LOCK('fake_write_schema')");
             connection.commit();
         }
     }
 
     public static void resetDemoData(LiveConfig config) throws SQLException {
         try (Connection connection = connect(config); Statement statement = connection.createStatement()) {
-            statement.execute("TRUNCATE tasks, idempotency, events, outbox, inbox, operations, quotas");
+            statement.execute(
+                    "TRUNCATE tasks, idempotency, events, outbox, inbox, operations, quotas, checkpoints, budget_calls");
             connection.commit();
         }
         try (Connection connection = connectFake(config); Statement statement = connection.createStatement()) {

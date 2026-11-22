@@ -115,12 +115,14 @@ scripts/run-chapter.sh 3
 
 ## 已知局限
 
-真实的多条业务线、真实下游和生产容量不在这个仓库里。假写只认 `operation_id`，用来把接口定下来。
+跑过的是 PostgreSQL、Kafka、MySQL 上的第 3、4 章和三段演示。
 
-各章规则测试跑在进程内的 PostgreSQL 事务模型和 Kafka 日志上，用来把事务边界、重复投递和手动提交位移跑通。演示则连本机 PostgreSQL 与 Kafka，由三个 Java 进程完成三段事故。它仍不代表生产流量。
+FastAPI 和 LangGraph 是 PDF 里的名字，仓库里是三个 Java 进程。
+
+Milvus、独立 MCP Server、Redis、对象存储、Kubernetes 没有按规则跑过。
 
 ## 面试官怎么看
 
 1. 读本页，确认这是运行底座，不是聊天产品。
 2. 看 `docs/架构.md` 里的组件和标识。
-3. 看 `验收/进度.md`。每一章有一份验收，写明规则、测试命令和是否通过。
+3. 看 `验收/进度.md`。每一章有一份验收，写明规则、测试命令，以及「规则有测试」或「云端跑过」。

@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runtime
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: runtime
+  template:
+    metadata:
+      labels:
+        app: runtime
+    spec:
+      containers:
+        - name: runtime
+          image: agent-runtime
+          args: ["runtime"]
+          env:
+            - name: RUNTIME_ROLE
+              value: worker-and-recovery-scan

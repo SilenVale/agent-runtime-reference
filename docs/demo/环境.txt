@@ -1,0 +1,8 @@
+PostgreSQL=PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+Kafka=Topic: runtime.schedule	TopicId: WK0MKFrrQ6asWYUKJ6ojyw	PartitionCount: 1	ReplicationFactor: 1	Configs: 
+MySQL假写=8.4.13 db=fake_write
+服务启动方式=Docker Compose (/workspace/deploy/demo/docker-compose.yml)
+消费组=runtime-workers-demo-204396
+租约等待=自然到期（脚本不改 lease_expires_at）
+进程内Database=未使用
+进程内KafkaLog=未使用

@@ -1,0 +1,22 @@
+服务=postgres:16.15:5432 mysql:8.4:3306/fake_write
+## 4.1
+旧代次提交 changed=0
+数据库时钟未到期续租 changed=1
+数据库时钟已到期续租 changed=0
+## 4.2
+operation_id first=op-dd4d39cf-df77-4315-bbfc-e925ae29e021 second=op-dd4d39cf-df77-4315-bbfc-e925ae29e021 same=true
+账本 status=PLANNED
+换参数拒绝=true
+## 4.4
+账本已提交 ops=1 Checkpoint回滚 cps=0
+图位置单独提交 cps=1 未提交账本 ops=0
+## 4.5
+接管后 spent=40 epoch=2
+旧代次清零 changed=0
+新预留后 spent=40 reserved=10
+## 4.6
+重复预留后 reserved=10 重复结算后 spent=47 reserved=0 settled=7
+## 4.7
+退出后预留 state=RESERVED reserved=12 spent=40
+## 4.8
+旧代次登记 changed=0 当前引用 recovery_ref=task-b48dbfc8-1f09-4e8a-87d7-4d4991da103b:epoch-1

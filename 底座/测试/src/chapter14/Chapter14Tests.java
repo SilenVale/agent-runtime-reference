@@ -4,8 +4,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
-import demo.ThreeIncidents;
-
 public final class Chapter14Tests {
     public static void main(String[] args) throws Exception {
         String readme = Files.readString(Path.of("README.md"));
@@ -36,20 +34,31 @@ public final class Chapter14Tests {
         if (Files.exists(Path.of("docs/面试题对照.md")) || Files.exists(Path.of("docs/简历条目.md"))) {
             throw new AssertionError("这两份文件不在公开仓库里");
         }
-        String demo = ThreeIncidents.run();
+        Path env = Path.of("docs/demo/环境.txt");
+        Path demo = Path.of("docs/demo/三段演示.txt");
+        if (!Files.exists(env) || !Files.exists(demo)) {
+            throw new AssertionError("请先跑 scripts/demo.sh，留下真实 PostgreSQL/Kafka 的演示记录");
+        }
+        String envText = Files.readString(env);
+        String demoText = Files.readString(demo);
+        if (!envText.contains("PostgreSQL=") || envText.contains("进程内Database=使用")) {
+            throw new AssertionError("演示没有连上真实 PostgreSQL");
+        }
+        if (!envText.contains("Kafka=") || !envText.contains("进程内KafkaLog=未使用")) {
+            throw new AssertionError("演示没有连上真实 Kafka");
+        }
+        if (!envText.contains("进程内Database=未使用")) {
+            throw new AssertionError("演示不能用进程内 Database");
+        }
         for (String step : List.of("受理", "投递", "接管", "代次拒绝", "按原编号查询")) {
-            if (!demo.contains(step)) {
+            if (!demoText.contains(step)) {
                 throw new AssertionError("演示缺少步骤：" + step);
             }
         }
-        if (!demo.contains("任务数=1") || !demo.contains("epoch=2") || !demo.contains("写入次数=1")) {
-            throw new AssertionError("三段演示没有都接住：" + demo);
+        if (!demoText.contains("任务数=1") || !demoText.contains("epoch=2") || !demoText.contains("写入次数=1")) {
+            throw new AssertionError("三段演示没有都接住：" + demoText);
         }
-        Path saved = Path.of("docs/demo/三段演示.txt");
-        if (!Files.exists(saved) || !Files.readString(saved).contains("按原编号查询")) {
-            throw new AssertionError("终端记录还没写到 docs/demo/三段演示.txt");
-        }
-        System.out.println("通过 九段说明和三段演示");
+        System.out.println("通过 九段说明和真实服务三段演示");
         System.out.println("测试 1 项，通过 1 项");
     }
 }

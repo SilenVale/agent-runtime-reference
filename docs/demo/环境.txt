@@ -1,0 +1,5 @@
+PostgreSQL=PostgreSQL 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+Kafka=Topic: runtime.schedule	TopicId: v-JNuHZNSfmcKlrioSeSgw	PartitionCount: 1	ReplicationFactor: 1	Configs: segment.bytes=1073741824
+消费组=runtime-workers-demo-32501
+进程内Database=未使用
+进程内KafkaLog=未使用

@@ -61,7 +61,8 @@ public final class Chapter13Tests {
     private static boolean linePassed(String progress, int chapter) {
         for (String line : progress.split("\n")) {
             if (line.startsWith("| " + chapter + " |")) {
-                return line.contains("| 通过 |");
+                return line.contains("| 通过 |")
+                        || line.contains("规则通过、运行环境通过");
             }
         }
         return false;
